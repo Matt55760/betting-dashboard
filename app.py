@@ -278,8 +278,38 @@ def load_data() -> pd.DataFrame:
         conn,
     )
     conn.close()
+
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "Bet ID", "Date", "Time", "Day of Week", "Track", "Account", "Bookmaker",
+                "Event", "Odds Taken", "Exchange Odds", "BSP", "Stake", "Result",
+                "Profit/Loss", "CLV %", "Edge %", "Notes"
+            ]
+        )
+
+    # force proper types
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    df = df.dropna(subset=["Date"])
+    df["Stake"] = pd.to_numeric(df["Stake"], errors="coerce").fillna(0)
+    df["Profit/Loss"] = pd.to_numeric(df["Profit/Loss"], errors="coerce").fillna(0)
+    df["Odds Taken"] = pd.to_numeric(df["Odds Taken"], errors="coerce")
+    df["Exchange Odds"] = pd.to_numeric(df["Exchange Odds"], errors="coerce")
+    df["BSP"] = pd.to_numeric(df["BSP"], errors="coerce")
+    df["CLV %"] = pd.to_numeric(df["CLV %"], errors="coerce")
+    df["Edge %"] = pd.to_numeric(df["Edge %"], errors="coerce")
+
+    for col in ["Day of Week", "Track", "Account", "Bookmaker", "Event", "Result", "Notes", "Time"]:
+        df[col] = df[col].fillna("").astype(str)
+
+    # remove bad dates
+    df = df.dropna(subset=["Date"]).copy()
+
+    # rebuild day name from actual date
+    df["Day of Week"] = df["Date"].dt.day_name()
+
+    df = df.sort_values(["Date", "Time", "Bet ID"]).reset_index(drop=True)
+    df["Cumulative P/L"] = df["Profit/Loss"].cumsum()
+    return df
 
     if df.empty:
         return pd.DataFrame(
@@ -484,6 +514,9 @@ selected_account = st.sidebar.selectbox("Account", accounts)
 selected_result = st.sidebar.selectbox("Result", results)
 selected_track = st.sidebar.selectbox("Track", tracks)
 selected_day = st.sidebar.selectbox("Day of Week", days_of_week)
+
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+df = df.dropna(subset=["Date"]).copy()
 
 filtered_df = df[
     (df["Date"].dt.date >= start_date) &
