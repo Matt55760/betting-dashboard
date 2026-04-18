@@ -1,12 +1,14 @@
+import sqlite3
+from pathlib import Path
+from datetime import datetime, date
+
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from datetime import datetime, date
-from pathlib import Path
 
 st.set_page_config(page_title="Betting Dashboard", layout="wide")
 
-FILE_NAME = "bets.xlsx"
+DB_FILE = "bets.db"
 
 st.markdown(
     """
@@ -62,63 +64,230 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = df.columns.str.strip()
-    df = df.rename(columns={
-        "Profit": "Profit/Loss",
-        "Exchange odds": "Exchange Odds",
-        "CLV": "CLV %",
-        "Edge": "Edge %",
-    })
-    return df
 
-def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
-    needed = [
-        "Bet ID", "Date", "Time", "Day of Week", "Track", "Account", "Bookmaker",
-        "Event", "Odds Taken", "Exchange Odds", "BSP", "Stake", "Result",
-        "Profit/Loss", "CLV %", "Edge %", "Notes"
-    ]
-    for col in needed:
-        if col not in df.columns:
-            df[col] = None
-    return df[needed]
+def get_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def generate_bet_id(df: pd.DataFrame) -> int:
-    if df.empty or df["Bet ID"].dropna().empty:
-        return 1
-    return int(pd.to_numeric(df["Bet ID"], errors="coerce").max()) + 1
+
+def init_db() -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bets (
+            bet_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bet_date TEXT NOT NULL,
+            bet_time TEXT,
+            day_of_week TEXT,
+            track TEXT,
+            account TEXT,
+            bookmaker TEXT,
+            event TEXT,
+            odds_taken REAL,
+            exchange_odds REAL,
+            bsp REAL,
+            stake REAL,
+            result TEXT,
+            profit_loss REAL,
+            clv_pct REAL,
+            edge_pct REAL,
+            notes TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
 
 def calculate_profit(odds_taken: float, stake: float, result: str) -> float:
     if result == "Win":
         return round((odds_taken - 1) * stake, 2)
     return round(-stake, 2)
 
+
 def calculate_edge(odds_taken: float, exchange_odds: float):
     if pd.notna(exchange_odds) and exchange_odds > 0:
         return round((odds_taken / exchange_odds - 1) * 100, 2)
     return None
+
 
 def calculate_clv(odds_taken: float, bsp: float):
     if pd.notna(bsp) and bsp > 0:
         return round((odds_taken / bsp - 1) * 100, 2)
     return None
 
+
+def insert_bet(
+    bet_date: date,
+    bet_time: str,
+    track: str,
+    account: str,
+    bookmaker: str,
+    event: str,
+    odds_taken: float,
+    exchange_odds: float,
+    bsp: float,
+    stake: float,
+    result: str,
+    notes: str,
+) -> None:
+    day_of_week = pd.to_datetime(bet_date).day_name()
+    profit_loss = calculate_profit(odds_taken, stake, result)
+    clv_pct = calculate_clv(odds_taken, bsp)
+    edge_pct = calculate_edge(odds_taken, exchange_odds)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO bets (
+            bet_date, bet_time, day_of_week, track, account, bookmaker, event,
+            odds_taken, exchange_odds, bsp, stake, result, profit_loss, clv_pct, edge_pct, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(bet_date),
+            bet_time,
+            day_of_week,
+            track.strip(),
+            account.strip(),
+            bookmaker.strip(),
+            event.strip(),
+            odds_taken,
+            exchange_odds,
+            bsp,
+            stake,
+            result,
+            profit_loss,
+            clv_pct,
+            edge_pct,
+            notes.strip(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_bet(
+    bet_id: int,
+    bet_date: date,
+    bet_time: str,
+    track: str,
+    account: str,
+    bookmaker: str,
+    event: str,
+    odds_taken: float,
+    exchange_odds: float,
+    bsp: float,
+    stake: float,
+    result: str,
+    notes: str,
+) -> None:
+    day_of_week = pd.to_datetime(bet_date).day_name()
+    profit_loss = calculate_profit(odds_taken, stake, result)
+    clv_pct = calculate_clv(odds_taken, bsp)
+    edge_pct = calculate_edge(odds_taken, exchange_odds)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE bets
+        SET bet_date = ?, bet_time = ?, day_of_week = ?, track = ?, account = ?, bookmaker = ?,
+            event = ?, odds_taken = ?, exchange_odds = ?, bsp = ?, stake = ?, result = ?,
+            profit_loss = ?, clv_pct = ?, edge_pct = ?, notes = ?
+        WHERE bet_id = ?
+        """,
+        (
+            str(bet_date),
+            bet_time,
+            day_of_week,
+            track.strip(),
+            account.strip(),
+            bookmaker.strip(),
+            event.strip(),
+            odds_taken,
+            exchange_odds,
+            bsp,
+            stake,
+            result,
+            profit_loss,
+            clv_pct,
+            edge_pct,
+            notes.strip(),
+            bet_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_bet(bet_id: int) -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM bets WHERE bet_id = ?", (bet_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_last_bet() -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        DELETE FROM bets
+        WHERE bet_id = (
+            SELECT bet_id
+            FROM bets
+            ORDER BY bet_date DESC, bet_time DESC, bet_id DESC
+            LIMIT 1
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def load_data() -> pd.DataFrame:
-    path = Path(FILE_NAME)
-    if not path.exists():
-        empty = pd.DataFrame(columns=[
-            "Bet ID", "Date", "Time", "Day of Week", "Track", "Account", "Bookmaker",
-            "Event", "Odds Taken", "Exchange Odds", "BSP", "Stake", "Result",
-            "Profit/Loss", "CLV %", "Edge %", "Notes"
-        ])
-        empty.to_excel(FILE_NAME, index=False)
+    conn = get_conn()
+    df = pd.read_sql_query(
+        """
+        SELECT
+            bet_id AS "Bet ID",
+            bet_date AS "Date",
+            bet_time AS "Time",
+            day_of_week AS "Day of Week",
+            track AS "Track",
+            account AS "Account",
+            bookmaker AS "Bookmaker",
+            event AS "Event",
+            odds_taken AS "Odds Taken",
+            exchange_odds AS "Exchange Odds",
+            bsp AS "BSP",
+            stake AS "Stake",
+            result AS "Result",
+            profit_loss AS "Profit/Loss",
+            clv_pct AS "CLV %",
+            edge_pct AS "Edge %",
+            notes AS "Notes"
+        FROM bets
+        ORDER BY bet_date ASC, bet_time ASC, bet_id ASC
+        """,
+        conn,
+    )
+    conn.close()
 
-    df = pd.read_excel(FILE_NAME)
-    df = normalise_columns(df)
-    df = ensure_required_columns(df)
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "Bet ID", "Date", "Time", "Day of Week", "Track", "Account", "Bookmaker",
+                "Event", "Odds Taken", "Exchange Odds", "BSP", "Stake", "Result",
+                "Profit/Loss", "CLV %", "Edge %", "Notes"
+            ]
+        )
 
-    df["Bet ID"] = pd.to_numeric(df["Bet ID"], errors="coerce")
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df["Stake"] = pd.to_numeric(df["Stake"], errors="coerce").fillna(0)
     df["Profit/Loss"] = pd.to_numeric(df["Profit/Loss"], errors="coerce").fillna(0)
@@ -128,41 +297,24 @@ def load_data() -> pd.DataFrame:
     df["CLV %"] = pd.to_numeric(df["CLV %"], errors="coerce")
     df["Edge %"] = pd.to_numeric(df["Edge %"], errors="coerce")
 
-    for col in ["Day of Week", "Track", "Account", "Bookmaker", "Event", "Result", "Notes"]:
+    for col in ["Day of Week", "Track", "Account", "Bookmaker", "Event", "Result", "Notes", "Time"]:
         df[col] = df[col].fillna("").astype(str)
 
-    df["Time"] = df["Time"].fillna("").astype(str)
-    df = df.dropna(subset=["Date"]).copy()
-    df["Day of Week"] = df["Date"].dt.day_name()
-
-    missing_mask = df["Bet ID"].isna()
-    if missing_mask.any():
-        next_id = 1
-        existing = set(pd.to_numeric(df.loc[~missing_mask, "Bet ID"], errors="coerce").dropna().astype(int).tolist())
-        new_ids = []
-        for _ in range(missing_mask.sum()):
-            while next_id in existing:
-                next_id += 1
-            new_ids.append(next_id)
-            existing.add(next_id)
-            next_id += 1
-        df.loc[missing_mask, "Bet ID"] = new_ids
-
-    df["Bet ID"] = df["Bet ID"].astype(int)
-    df = df.sort_values(["Date", "Time", "Bet ID"]).reset_index(drop=True)
+    df = df.dropna(subset=["Date"]).sort_values(["Date", "Time", "Bet ID"]).reset_index(drop=True)
     df["Cumulative P/L"] = df["Profit/Loss"].cumsum()
     return df
 
-def save_data(df: pd.DataFrame) -> None:
-    output = df.copy()
-    for col in ["Cumulative P/L", "Bankroll", "Day"]:
-        if col in output.columns:
-            output = output.drop(columns=[col])
-    if "Date" in output.columns:
-        output["Date"] = pd.to_datetime(output["Date"], errors="coerce")
-        output["Day of Week"] = output["Date"].dt.day_name()
-    output.to_excel(FILE_NAME, index=False)
 
+def format_bet_label(row: pd.Series) -> str:
+    bet_date = row["Date"].strftime("%Y-%m-%d") if pd.notna(row["Date"]) else "No Date"
+    return (
+        f'#{int(row["Bet ID"])} | {bet_date} {row["Time"]} | '
+        f'{row["Bookmaker"]} | {row["Track"]} | {row["Event"]} | '
+        f'{row["Result"]} | £{row["Profit/Loss"]:.2f}'
+    )
+
+
+init_db()
 df = load_data()
 
 st.sidebar.header("Add New Bet")
@@ -183,30 +335,114 @@ with st.sidebar.form("new_bet_form", clear_on_submit=False):
     submitted = st.form_submit_button("Save Bet")
 
 if submitted:
-    new_date = pd.to_datetime(bet_date)
-    new_row = {
-        "Bet ID": generate_bet_id(df),
-        "Date": new_date,
-        "Time": bet_time.strftime("%H:%M:%S"),
-        "Day of Week": new_date.day_name(),
-        "Track": track.strip(),
-        "Account": account.strip(),
-        "Bookmaker": bookmaker.strip(),
-        "Event": event.strip(),
-        "Odds Taken": odds_taken,
-        "Exchange Odds": exchange_odds,
-        "BSP": bsp,
-        "Stake": stake,
-        "Result": result,
-        "Profit/Loss": calculate_profit(odds_taken, stake, result),
-        "CLV %": calculate_clv(odds_taken, bsp),
-        "Edge %": calculate_edge(odds_taken, exchange_odds),
-        "Notes": notes.strip(),
-    }
-    updated_df = pd.concat([df.drop(columns=["Cumulative P/L"], errors="ignore"), pd.DataFrame([new_row])], ignore_index=True)
-    save_data(updated_df)
+    insert_bet(
+        bet_date=bet_date,
+        bet_time=bet_time.strftime("%H:%M:%S"),
+        track=track,
+        account=account,
+        bookmaker=bookmaker,
+        event=event,
+        odds_taken=odds_taken,
+        exchange_odds=exchange_odds,
+        bsp=bsp,
+        stake=stake,
+        result=result,
+        notes=notes,
+    )
     st.sidebar.success("Bet saved.")
     st.rerun()
+
+st.sidebar.header("Quick Actions")
+
+if st.sidebar.button("Delete Last Bet"):
+    if not df.empty:
+        delete_last_bet()
+        st.sidebar.success("Last bet deleted.")
+        st.rerun()
+    else:
+        st.sidebar.warning("No bets to delete.")
+
+st.sidebar.header("Edit / Delete Selected Bet")
+
+if df.empty:
+    selected_bet_id = None
+    selected_row = None
+else:
+    selectable_df = df.sort_values(["Date", "Time", "Bet ID"], ascending=False).copy()
+    labels = {format_bet_label(row): int(row["Bet ID"]) for _, row in selectable_df.iterrows()}
+    selected_label = st.sidebar.selectbox("Select bet", list(labels.keys()))
+    selected_bet_id = labels[selected_label]
+    selected_row = df[df["Bet ID"] == selected_bet_id].iloc[0]
+
+if selected_bet_id is not None:
+    if st.sidebar.button("Delete Selected Bet"):
+        delete_bet(selected_bet_id)
+        st.sidebar.success("Selected bet deleted.")
+        st.rerun()
+
+    with st.sidebar.expander("Edit Selected Bet", expanded=False):
+        with st.form("edit_bet_form"):
+            edit_date = st.date_input("Edit Date", value=selected_row["Date"].date(), key="edit_date")
+
+            try:
+                edit_time_default = datetime.strptime(selected_row["Time"], "%H:%M:%S").time()
+            except Exception:
+                try:
+                    edit_time_default = datetime.strptime(selected_row["Time"], "%H:%M").time()
+                except Exception:
+                    edit_time_default = datetime.now().time().replace(second=0, microsecond=0)
+
+            edit_time = st.time_input("Edit Time", value=edit_time_default, key="edit_time")
+            edit_track = st.text_input("Edit Track", value=selected_row["Track"], key="edit_track")
+            edit_account = st.text_input("Edit Account", value=selected_row["Account"], key="edit_account")
+            edit_bookmaker = st.text_input("Edit Bookmaker", value=selected_row["Bookmaker"], key="edit_bookmaker")
+            edit_event = st.text_input("Edit Event", value=selected_row["Event"], key="edit_event")
+            edit_odds = st.number_input(
+                "Edit Odds Taken", min_value=1.01,
+                value=float(selected_row["Odds Taken"]) if pd.notna(selected_row["Odds Taken"]) else 2.00,
+                step=0.01, format="%.2f", key="edit_odds"
+            )
+            edit_exchange = st.number_input(
+                "Edit Exchange Odds", min_value=1.01,
+                value=float(selected_row["Exchange Odds"]) if pd.notna(selected_row["Exchange Odds"]) else 1.80,
+                step=0.01, format="%.2f", key="edit_exchange"
+            )
+            edit_bsp = st.number_input(
+                "Edit BSP", min_value=1.01,
+                value=float(selected_row["BSP"]) if pd.notna(selected_row["BSP"]) else 1.90,
+                step=0.01, format="%.2f", key="edit_bsp"
+            )
+            edit_stake = st.number_input(
+                "Edit Stake (£)", min_value=0.0,
+                value=float(selected_row["Stake"]) if pd.notna(selected_row["Stake"]) else 0.0,
+                step=1.0, format="%.2f", key="edit_stake"
+            )
+            edit_result = st.selectbox(
+                "Edit Result", ["Win", "Lose"],
+                index=0 if selected_row["Result"] == "Win" else 1,
+                key="edit_result"
+            )
+            edit_notes = st.text_input("Edit Notes", value=selected_row["Notes"], key="edit_notes")
+            edit_submitted = st.form_submit_button("Save Changes")
+
+        if edit_submitted:
+            update_bet(
+                bet_id=selected_bet_id,
+                bet_date=edit_date,
+                bet_time=edit_time.strftime("%H:%M:%S"),
+                track=edit_track,
+                account=edit_account,
+                bookmaker=edit_bookmaker,
+                event=edit_event,
+                odds_taken=edit_odds,
+                exchange_odds=edit_exchange,
+                bsp=edit_bsp,
+                stake=edit_stake,
+                result=edit_result,
+                notes=edit_notes,
+            )
+            st.success("Bet updated.")
+            st.rerun()
 
 st.sidebar.header("Filters")
 
@@ -275,7 +511,6 @@ filtered_df["Day"] = filtered_df["Date"].dt.normalize()
 
 daily_curve_df = filtered_df.groupby("Day", as_index=False).tail(1).copy()
 daily_df = filtered_df.groupby("Day", as_index=False)["Profit/Loss"].sum().sort_values("Day").reset_index(drop=True)
-
 daily_df["Rolling 7D P/L"] = daily_df["Profit/Loss"].rolling(7, min_periods=1).sum()
 
 daily_curve_df["Peak"] = daily_curve_df["Cumulative P/L"].cummax()
@@ -336,10 +571,7 @@ with row1:
         go.Bar(
             x=daily_df["Day"],
             y=daily_df["Profit/Loss"],
-            marker_color=[
-                "#22c55e" if x >= 0 else "#ef4444"
-                for x in daily_df["Profit/Loss"]
-            ],
+            marker_color=["#22c55e" if x >= 0 else "#ef4444" for x in daily_df["Profit/Loss"]],
             hovertemplate="%{x|%d %b %Y}<br>Daily P/L: £%{y:,.2f}<extra></extra>",
         )
     )
