@@ -278,6 +278,7 @@ def load_data() -> pd.DataFrame:
         conn,
     )
     conn.close()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
     if df.empty:
         return pd.DataFrame(
