@@ -279,6 +279,7 @@ def load_data() -> pd.DataFrame:
     )
     conn.close()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
 
     if df.empty:
         return pd.DataFrame(
