@@ -200,7 +200,14 @@ def insert_bet(
         "edge_pct": calculate_edge(float(odds_taken), float(exchange_odds)),
         "notes": notes.strip(),
     }
-    supabase.table("bets").insert(data).execute()
+
+    try:
+        supabase.table("bets").insert(data).execute()
+    except Exception as e:
+        st.error(f"Supabase insert failed: {str(e)}")
+        st.write("Data sent:")
+        st.json(data)
+        st.stop()
 
 
 def update_bet(
