@@ -1,4 +1,5 @@
 import os
+import calendar
 from datetime import datetime, date
 
 import pandas as pd
@@ -11,8 +12,6 @@ st.set_page_config(page_title="Greyhound Betting Dashboard", layout="wide")
 # -----------------------------
 # SUPABASE CONNECTION
 # -----------------------------
-# Prefer Streamlit secrets on the hosted site.
-# Locally, you can either use st.secrets or hardcode temporarily.
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
 
@@ -103,8 +102,7 @@ def calculate_clv(odds_taken: float, bsp: float):
 def load_data() -> pd.DataFrame:
     try:
         response = (
-            supabase
-            .table("bets")
+            supabase.table("bets")
             .select("*")
             .order("bet_date")
             .order("bet_time")
@@ -112,7 +110,6 @@ def load_data() -> pd.DataFrame:
             .execute()
         )
         data = response.data
-
     except Exception as e:
         st.error(f"Supabase load_data() failed: {str(e)}")
         st.stop()
@@ -272,6 +269,124 @@ def format_bet_label(row: pd.Series) -> str:
         f'{row["Bookmaker"]} | {row["Track"]} | {row["Event"]} | '
         f'{row["Result"]} | £{row["Profit/Loss"]:.2f}'
     )
+
+
+def render_month_calendar(daily_df: pd.DataFrame, selected_month: str) -> str:
+    month_df = daily_df[daily_df["Month"] == selected_month].copy()
+
+    if month_df.empty:
+        return "<p style='color:#94a3b8;'>No data for this month.</p>"
+
+    month_start = pd.to_datetime(selected_month + "-01")
+    year = month_start.year
+    month = month_start.month
+
+    cal = calendar.Calendar(firstweekday=0)  # Monday
+    month_days = list(cal.monthdatescalendar(year, month))
+
+    pnl_map = {
+        pd.to_datetime(row["Day"]).date(): row["Profit/Loss"]
+        for _, row in month_df.iterrows()
+    }
+
+    weekday_headers = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    html = """
+    <style>
+    .calendar-wrap {
+        background: rgba(17,24,39,0.35);
+        border: 1px solid rgba(148,163,184,0.12);
+        border-radius: 18px;
+        padding: 14px;
+    }
+    .calendar-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 8px;
+    }
+    .calendar-header {
+        text-align: center;
+        font-weight: 600;
+        color: #cbd5e1;
+        padding: 6px 0 10px 0;
+        font-size: 0.92rem;
+    }
+    .calendar-cell {
+        min-height: 82px;
+        border-radius: 14px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        border: 1px solid rgba(255,255,255,0.06);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+    }
+    .calendar-empty {
+        background: rgba(255,255,255,0.03);
+        opacity: 0.35;
+    }
+    .calendar-neutral {
+        background: rgba(51,65,85,0.55);
+    }
+    .calendar-profit {
+        background: rgba(34,197,94,0.22);
+        border: 1px solid rgba(34,197,94,0.35);
+    }
+    .calendar-loss {
+        background: rgba(239,68,68,0.22);
+        border: 1px solid rgba(239,68,68,0.35);
+    }
+    .calendar-day {
+        color: #f8fafc;
+        font-weight: 700;
+        font-size: 0.95rem;
+    }
+    .calendar-pnl {
+        color: #e2e8f0;
+        font-size: 0.92rem;
+        font-weight: 600;
+        line-height: 1.2;
+        word-break: break-word;
+    }
+    </style>
+    """
+
+    html += '<div class="calendar-wrap">'
+    html += '<div class="calendar-grid">'
+
+    for day_name in weekday_headers:
+        html += f'<div class="calendar-header">{day_name}</div>'
+
+    for week in month_days:
+        for day in week:
+            if day.month != month:
+                html += '<div class="calendar-cell calendar-empty"></div>'
+                continue
+
+            pnl = pnl_map.get(day)
+
+            if pnl is None:
+                cell_class = "calendar-neutral"
+                pnl_text = ""
+            elif pnl > 0:
+                cell_class = "calendar-profit"
+                pnl_text = f"+£{pnl:,.2f}"
+            elif pnl < 0:
+                cell_class = "calendar-loss"
+                pnl_text = f"-£{abs(pnl):,.2f}"
+            else:
+                cell_class = "calendar-neutral"
+                pnl_text = "£0.00"
+
+            html += f'''
+            <div class="calendar-cell {cell_class}">
+                <div class="calendar-day">{day.day}</div>
+                <div class="calendar-pnl">{pnl_text}</div>
+            </div>
+            '''
+
+    html += "</div></div>"
+    return html
 
 
 # -----------------------------
@@ -476,9 +591,6 @@ daily_curve_df = filtered_df.groupby("Day", as_index=False).tail(1).copy()
 daily_df = filtered_df.groupby("Day", as_index=False)["Profit/Loss"].sum().sort_values("Day").reset_index(drop=True)
 daily_df["Day"] = pd.to_datetime(daily_df["Day"])
 daily_df["Month"] = daily_df["Day"].dt.to_period("M").astype(str)
-daily_df["Week"] = daily_df["Day"].dt.isocalendar().week
-daily_df["Weekday"] = daily_df["Day"].dt.weekday  # 0 = Monday
-daily_df["Rolling 7D P/L"] = daily_df["Profit/Loss"].rolling(7, min_periods=1).sum()
 
 daily_curve_df["Peak"] = daily_curve_df["Cumulative P/L"].cummax()
 daily_curve_df["Drawdown"] = daily_curve_df["Cumulative P/L"] - daily_curve_df["Peak"]
@@ -623,58 +735,15 @@ with c1:
 with c2:
     st.markdown('<div class="section-title">Monthly P/L Calendar</div>', unsafe_allow_html=True)
 
+    month_options = sorted(daily_df["Month"].unique())
     selected_month = st.selectbox(
         "Select Month",
-        sorted(daily_df["Month"].unique())
+        month_options,
+        index=len(month_options) - 1 if month_options else 0
     )
 
-    month_df = daily_df[daily_df["Month"] == selected_month]
-
-    # Pivot into calendar format
-    calendar_df = month_df.pivot_table(
-        index="Week",
-        columns="Weekday",
-        values="Profit/Loss",
-        aggfunc="sum"
-    )
-
-    # Ensure all weekdays exist
-    for i in range(7):
-        if i not in calendar_df.columns:
-            calendar_df[i] = None
-
-    calendar_df = calendar_df.sort_index()
-    calendar_df = calendar_df[[0,1,2,3,4,5,6]]
-
-    weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
-    fig_cal = go.Figure(
-        data=go.Heatmap(
-            z=calendar_df.values,
-            x=weekday_labels,
-            y=calendar_df.index.astype(str),
-            colorscale=[
-                [0, "#ef4444"],   # red
-                [0.5, "#111827"], # neutral
-                [1, "#22c55e"]    # green
-            ],
-            zmid=0,
-            hovertemplate="Week %{y}<br>%{x}<br>P/L: £%{z:,.2f}<extra></extra>"
-        )
-    )
-
-    fig_cal.update_layout(
-        template="plotly_dark",
-        height=320,
-        margin=dict(l=20, r=20, t=20, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(17,24,39,0.35)",
-        font=dict(color="#e5e7eb"),
-        xaxis=dict(title=""),
-        yaxis=dict(title="Week"),
-    )
-
-    st.plotly_chart(fig_cal, use_container_width=True)
+    calendar_html = render_month_calendar(daily_df, selected_month)
+    st.markdown(calendar_html, unsafe_allow_html=True)
 
 # -----------------------------
 # TABLE
