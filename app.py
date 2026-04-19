@@ -101,8 +101,21 @@ def calculate_clv(odds_taken: float, bsp: float):
 
 
 def load_data() -> pd.DataFrame:
-    response = supabase.table("bets").select("*").order("bet_date").order("bet_time").order("id").execute()
-    data = response.data
+    try:
+        response = (
+            supabase
+            .table("bets")
+            .select("*")
+            .order("bet_date")
+            .order("bet_time")
+            .order("id")
+            .execute()
+        )
+        data = response.data
+
+    except Exception as e:
+        st.error(f"Supabase load_data() failed: {str(e)}")
+        st.stop()
 
     if not data:
         return pd.DataFrame(
