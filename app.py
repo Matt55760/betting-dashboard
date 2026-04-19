@@ -349,10 +349,9 @@ def render_month_calendar(daily_df: pd.DataFrame, selected_month: str) -> str:
         word-break: break-word;
     }
     </style>
+    <div class="calendar-wrap">
+      <div class="calendar-grid">
     """
-
-    html += '<div class="calendar-wrap">'
-    html += '<div class="calendar-grid">'
 
     for day_name in weekday_headers:
         html += f'<div class="calendar-header">{day_name}</div>'
@@ -378,12 +377,12 @@ def render_month_calendar(daily_df: pd.DataFrame, selected_month: str) -> str:
                 cell_class = "calendar-neutral"
                 pnl_text = "£0.00"
 
-            html += f'''
-            <div class="calendar-cell {cell_class}">
-                <div class="calendar-day">{day.day}</div>
-                <div class="calendar-pnl">{pnl_text}</div>
-            </div>
-            '''
+            html += (
+                f'<div class="calendar-cell {cell_class}">'
+                f'<div class="calendar-day">{day.day}</div>'
+                f'<div class="calendar-pnl">{pnl_text}</div>'
+                f'</div>'
+            )
 
     html += "</div></div>"
     return html
