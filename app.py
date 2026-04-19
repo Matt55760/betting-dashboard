@@ -586,13 +586,41 @@ filtered_df["Cumulative P/L"] = filtered_df["Profit/Loss"].cumsum()
 filtered_df["Bankroll"] = starting_bankroll + filtered_df["Cumulative P/L"]
 filtered_df["Day"] = filtered_df["Date"].dt.normalize()
 
-daily_curve_df = filtered_df.groupby("Day", as_index=False).tail(1).copy()
-daily_df = filtered_df.groupby("Day", as_index=False)["Profit/Loss"].sum().sort_values("Day").reset_index(drop=True)
+# Daily totals from actual betting days
+daily_df = (
+    filtered_df.groupby("Day", as_index=False)["Profit/Loss"]
+    .sum()
+    .sort_values("Day")
+    .reset_index(drop=True)
+)
+
 daily_df["Day"] = pd.to_datetime(daily_df["Day"])
+
+# Fill missing calendar days with £0.00
+full_day_range = pd.date_range(
+    start=daily_df["Day"].min(),
+    end=daily_df["Day"].max(),
+    freq="D"
+)
+
+daily_df = (
+    pd.DataFrame({"Day": full_day_range})
+    .merge(daily_df, on="Day", how="left")
+)
+
+daily_df["Profit/Loss"] = daily_df["Profit/Loss"].fillna(0.0)
+
+# Calendar-based cumulative P/L and bankroll
+daily_df["Cumulative P/L"] = daily_df["Profit/Loss"].cumsum()
+daily_df["Bankroll"] = starting_bankroll + daily_df["Cumulative P/L"]
 daily_df["Month"] = daily_df["Day"].dt.to_period("M").astype(str)
 
-daily_curve_df["Peak"] = daily_curve_df["Cumulative P/L"].cummax()
-daily_curve_df["Drawdown"] = daily_curve_df["Cumulative P/L"] - daily_curve_df["Peak"]
+# Calendar-based drawdown
+daily_df["Peak"] = daily_df["Cumulative P/L"].cummax()
+daily_df["Drawdown"] = daily_df["Cumulative P/L"] - daily_df["Peak"]
+
+# Use calendar-based daily_df for line charts
+daily_curve_df = daily_df.copy()
 
 # -----------------------------
 # PAGE HEADER
