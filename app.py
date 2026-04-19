@@ -474,6 +474,10 @@ filtered_df["Day"] = filtered_df["Date"].dt.normalize()
 
 daily_curve_df = filtered_df.groupby("Day", as_index=False).tail(1).copy()
 daily_df = filtered_df.groupby("Day", as_index=False)["Profit/Loss"].sum().sort_values("Day").reset_index(drop=True)
+daily_df["Day"] = pd.to_datetime(daily_df["Day"])
+daily_df["Month"] = daily_df["Day"].dt.to_period("M").astype(str)
+daily_df["Week"] = daily_df["Day"].dt.isocalendar().week
+daily_df["Weekday"] = daily_df["Day"].dt.weekday  # 0 = Monday
 daily_df["Rolling 7D P/L"] = daily_df["Profit/Loss"].rolling(7, min_periods=1).sum()
 
 daily_curve_df["Peak"] = daily_curve_df["Cumulative P/L"].cummax()
@@ -617,31 +621,60 @@ with c1:
     st.plotly_chart(fig_dd, use_container_width=True)
 
 with c2:
-    st.markdown('<div class="section-title">Rolling 7-Day P/L</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Monthly P/L Calendar</div>', unsafe_allow_html=True)
 
-    fig_roll = go.Figure()
-    fig_roll.add_trace(
-        go.Scatter(
-            x=daily_df["Day"],
-            y=daily_df["Rolling 7D P/L"],
-            mode="lines",
-            line=dict(width=3, color="#a78bfa"),
-            fill="tozeroy",
-            fillcolor="rgba(167,139,250,0.12)",
-            hovertemplate="%{x|%d %b %Y}<br>7D P/L: £%{y:,.2f}<extra></extra>",
+    selected_month = st.selectbox(
+        "Select Month",
+        sorted(daily_df["Month"].unique())
+    )
+
+    month_df = daily_df[daily_df["Month"] == selected_month]
+
+    # Pivot into calendar format
+    calendar_df = month_df.pivot_table(
+        index="Week",
+        columns="Weekday",
+        values="Profit/Loss",
+        aggfunc="sum"
+    )
+
+    # Ensure all weekdays exist
+    for i in range(7):
+        if i not in calendar_df.columns:
+            calendar_df[i] = None
+
+    calendar_df = calendar_df.sort_index()
+    calendar_df = calendar_df[[0,1,2,3,4,5,6]]
+
+    weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    fig_cal = go.Figure(
+        data=go.Heatmap(
+            z=calendar_df.values,
+            x=weekday_labels,
+            y=calendar_df.index.astype(str),
+            colorscale=[
+                [0, "#ef4444"],   # red
+                [0.5, "#111827"], # neutral
+                [1, "#22c55e"]    # green
+            ],
+            zmid=0,
+            hovertemplate="Week %{y}<br>%{x}<br>P/L: £%{z:,.2f}<extra></extra>"
         )
     )
-    fig_roll.update_layout(
+
+    fig_cal.update_layout(
         template="plotly_dark",
         height=320,
         margin=dict(l=20, r=20, t=20, b=20),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(17,24,39,0.35)",
         font=dict(color="#e5e7eb"),
-        xaxis=dict(showgrid=False, title=""),
-        yaxis=dict(title="Rolling 7D P/L (£)", gridcolor="rgba(148,163,184,0.15)"),
+        xaxis=dict(title=""),
+        yaxis=dict(title="Week"),
     )
-    st.plotly_chart(fig_roll, use_container_width=True)
+
+    st.plotly_chart(fig_cal, use_container_width=True)
 
 # -----------------------------
 # TABLE
